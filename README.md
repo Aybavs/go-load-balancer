@@ -123,6 +123,9 @@ acquisition on every request. The atomic-snapshot approach keeps the hot path
 lock-free; a `-race` stress test (`internal/server/concurrency_test.go`) hammers
 it under concurrent health flips.
 
+The reasoning behind this model, the consistency window it accepts, and the
+P2C-EWMA scoring choice are written up in [docs/design-notes.md](docs/design-notes.md).
+
 ## Benchmarks
 
 Machine: Apple Silicon (darwin/arm64), Go 1.26.1. Reproduce with the commands
