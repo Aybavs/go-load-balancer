@@ -4,6 +4,7 @@ package proxy
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"time"
@@ -48,16 +49,18 @@ type Handler struct {
 	maxRetries int
 	onFailure  func(*backend.Backend)
 	observer   Observer
+	logger     *slog.Logger
 	proxies    map[*backend.Backend]*httputil.ReverseProxy
 }
 
-func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onFailure func(*backend.Backend), observer Observer) *Handler {
+func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onFailure func(*backend.Backend), observer Observer, logger *slog.Logger) *Handler {
 	h := &Handler{
 		pool:       pool,
 		algo:       algo,
 		maxRetries: maxRetries,
 		onFailure:  onFailure,
 		observer:   observer,
+		logger:     logger,
 		proxies:    make(map[*backend.Backend]*httputil.ReverseProxy),
 	}
 	for _, b := range pool.All() {
@@ -86,8 +89,27 @@ func isIdempotent(method string) bool {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqStart := time.Now()
+	chosenURL := ""
+	status := http.StatusServiceUnavailable
+	attempts := 0
+
+	defer func() {
+		if h.logger != nil {
+			h.logger.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"backend", chosenURL,
+				"status", status,
+				"duration_ms", time.Since(reqStart).Milliseconds(),
+				"attempts", attempts,
+			)
+		}
+	}()
+
 	healthy := h.pool.Healthy()
 	if len(healthy) == 0 {
+		status = http.StatusServiceUnavailable
 		http.Error(w, "no healthy backends", http.StatusServiceUnavailable)
 		return
 	}
@@ -101,6 +123,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		tried[b] = true
+		attempts++
+		chosenURL = b.URL.String()
 
 		rp := h.proxies[b]
 		if rp == nil {
@@ -115,6 +139,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.DecInFlight()
 
 		if !st.failed {
+			status = ftw.status
 			if h.observer != nil {
 				h.observer.Observe(b, ftw.status/100, time.Since(start))
 			}
@@ -129,6 +154,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	status = http.StatusBadGateway
 	if !ftw.wrote {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 	}
