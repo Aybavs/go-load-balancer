@@ -27,12 +27,19 @@ type ProxyConfig struct {
 	MaxRetries int `yaml:"max_retries"`
 }
 
+type TransportConfig struct {
+	MaxIdleConns        int           `yaml:"max_idle_conns"`
+	MaxIdleConnsPerHost int           `yaml:"max_idle_conns_per_host"`
+	IdleConnTimeout     time.Duration `yaml:"idle_conn_timeout"`
+}
+
 type Config struct {
 	Listen          string          `yaml:"listen"`
 	Algorithm       string          `yaml:"algorithm"`
 	Backends        []BackendConfig `yaml:"backends"`
 	Health          HealthConfig    `yaml:"health"`
 	Proxy           ProxyConfig     `yaml:"proxy"`
+	Transport       TransportConfig `yaml:"transport"`
 	ShutdownTimeout time.Duration   `yaml:"shutdown_timeout"`
 }
 
@@ -87,6 +94,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Health.PassiveThreshold == 0 {
 		c.Health.PassiveThreshold = 5
+	}
+	if c.Transport.MaxIdleConns == 0 {
+		c.Transport.MaxIdleConns = 100
+	}
+	if c.Transport.MaxIdleConnsPerHost == 0 {
+		c.Transport.MaxIdleConnsPerHost = 100
+	}
+	if c.Transport.IdleConnTimeout == 0 {
+		c.Transport.IdleConnTimeout = 90 * time.Second
 	}
 	for i := range c.Backends {
 		if c.Backends[i].Weight <= 0 {

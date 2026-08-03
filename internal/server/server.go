@@ -48,13 +48,25 @@ func New(cfg *config.Config) (*Server, error) {
 
 	reg := metrics.NewRegistry(pool)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure, reg, logger)
+	transport := buildTransport(cfg.Transport)
+	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure, reg, logger, transport)
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", reg.Handler())
 	mux.Handle("/", handler)
 
 	return &Server{cfg: cfg, pool: pool, checker: checker, handler: mux}, nil
+}
+
+// buildTransport clones the default transport and applies the connection-pool
+// tuning from config. The default MaxIdleConnsPerHost of 2 forces connection
+// churn under concurrency; raising it materially lowers proxy overhead.
+func buildTransport(cfg config.TransportConfig) *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConns = cfg.MaxIdleConns
+	tr.MaxIdleConnsPerHost = cfg.MaxIdleConnsPerHost
+	tr.IdleConnTimeout = cfg.IdleConnTimeout
+	return tr
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
