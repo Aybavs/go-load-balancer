@@ -17,8 +17,9 @@ are intentionally out of scope (see [Roadmap](#roadmap)).
 - **Lock-free hot path** — the healthy-backend set is published via an
   `atomic.Pointer` snapshot; each request reads it with a single atomic load, no
   mutex. Per-backend counters (in-flight, health, failures) are `sync/atomic`.
-- **Pluggable algorithms** — round-robin, least-connections, and
-  consistent-hashing (virtual-node ring, client-IP affinity).
+- **Pluggable algorithms** — round-robin, least-connections, consistent-hashing
+  (virtual-node ring, client-IP affinity), and **P2C-EWMA** (power-of-two-choices
+  scored by a latency EWMA — the technique used by Finagle and Envoy).
 - **Active + passive health checking** — periodic probes plus transport-failure
   feedback from real traffic; automatic eject and recover with hysteresis
   thresholds.
@@ -60,7 +61,7 @@ curl localhost:8080/metrics
 
 ```yaml
 listen: ":8080"                 # address the balancer listens on
-algorithm: round_robin          # round_robin | least_connections | consistent_hash
+algorithm: round_robin          # round_robin | least_connections | consistent_hash | p2c_ewma
 shutdown_timeout: 5s            # drain window on shutdown
 backends:
   - url: http://localhost:9001
@@ -75,7 +76,22 @@ health:
   passive_threshold: 5          # transport failures from live traffic before eject
 proxy:
   max_retries: 1                # extra attempts on other backends (idempotent only)
+transport:
+  max_idle_conns: 100           # global idle connection pool
+  max_idle_conns_per_host: 100  # raise from the default of 2 to avoid churn
+  idle_conn_timeout: 90s
 ```
+
+### Balancing algorithms
+
+- `round_robin` — even rotation via one atomic counter.
+- `least_connections` — the backend with the fewest in-flight requests.
+- `consistent_hash` — client-IP affinity on a virtual-node hash ring.
+- `p2c_ewma` — **power of two choices**: sample two random backends and pick the
+  lower-cost one, where `cost = (latency_EWMA + 1) * (in_flight + 1)`. This
+  reacts to latency (not just connection count) and avoids the herd behaviour of
+  always choosing the global minimum. Latency is tracked per backend as an
+  exponentially-weighted moving average updated on every response.
 
 ## Architecture
 
@@ -123,17 +139,21 @@ shown; numbers vary by machine.
 All selection paths are allocation-free.
 
 **End-to-end throughput** — `ab -n 20000 -c 50` against a no-op backend on
-localhost:
+localhost, 0 failed requests in every run:
 
-| Target                 | req/s   | p99 (ms) | failed |
-|------------------------|--------:|---------:|-------:|
-| Direct backend         | 27,200  |    7     |   0    |
-| Through load balancer  |  9,100  |   16     |   0    |
+| Target                                   | req/s   | p99 (ms) |
+|------------------------------------------|--------:|---------:|
+| Direct backend (baseline)                | 25,900  |    3     |
+| Through LB — default transport           |  9,100  |   16     |
+| Through LB — tuned transport             | 16,900  |    6     |
 
-On localhost the backend does no real work, so the extra proxy hop is essentially
-the entire measured cost — this is a worst-case view of proxy overhead. With
-backends that do real work over a network, the relative overhead is far smaller.
-No connection-reuse tuning is applied yet (see Roadmap).
+The default `http.Transport` caps idle connections per host at **2**, which
+forces connection churn under concurrency. Sharing one tuned transport
+(`MaxIdleConnsPerHost = 100`) nearly **doubled throughput** (9.1k → 16.9k req/s)
+and cut p99 latency from 16 ms to 6 ms — dropping proxy overhead from ~3× to
+~1.5×. On localhost the backend does no real work, so this is a worst-case view
+of the remaining proxy hop; with backends doing real work over a network the
+relative overhead is smaller still.
 
 ## Known simplifications (V1)
 
@@ -141,15 +161,17 @@ No connection-reuse tuning is applied yet (see Roadmap).
   production ring would key rebuilds on set identity.
 - A backend returning HTTP 5xx is treated as a response (passed through), not a
   passive failure.
+- The latency EWMA is a simple fixed-alpha average; a time-decayed peak-EWMA
+  would react faster to sudden latency spikes.
 - Weights are parsed but not yet used by a weighted strategy.
 
 ## Roadmap
 
 - TLS termination, HTTP/2, and gRPC proxying
 - Weighted and weighted-least-connections strategies
+- Time-decayed peak-EWMA scoring for P2C
 - Rate limiting and config hot-reload
 - Prometheus metrics format and richer latency histograms
-- Tuned `http.Transport` (connection pooling) for lower overhead
 
 ## Project layout
 
