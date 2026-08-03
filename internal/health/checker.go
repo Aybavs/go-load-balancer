@@ -42,8 +42,13 @@ func NewChecker(pool *backend.Pool, opts Options) *Checker {
 	return c
 }
 
-// Start runs active probing until ctx is cancelled.
+// Start runs active probing until ctx is cancelled. A non-positive interval
+// disables active probing (the checker still serves passive failures).
 func (c *Checker) Start(ctx context.Context) {
+	if c.opts.Interval <= 0 {
+		<-ctx.Done()
+		return
+	}
 	ticker := time.NewTicker(c.opts.Interval)
 	defer ticker.Stop()
 	for {
