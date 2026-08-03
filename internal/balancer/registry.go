@@ -7,6 +7,8 @@ func NewFromName(name string) (Algorithm, error) {
 	switch name {
 	case "round_robin":
 		return &RoundRobin{}, nil
+	case "least_connections":
+		return LeastConnections{}, nil
 	default:
 		return nil, fmt.Errorf("balancer: unknown algorithm %q", name)
 	}
