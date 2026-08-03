@@ -8,12 +8,14 @@ import (
 	"github.com/aybavs/go-load-balancer/internal/backend"
 	"github.com/aybavs/go-load-balancer/internal/balancer"
 	"github.com/aybavs/go-load-balancer/internal/config"
+	"github.com/aybavs/go-load-balancer/internal/health"
 	"github.com/aybavs/go-load-balancer/internal/proxy"
 )
 
 type Server struct {
 	cfg     *config.Config
 	pool    *backend.Pool
+	checker *health.Checker
 	handler http.Handler
 }
 
@@ -32,19 +34,31 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	pool := backend.NewPool(backends)
 
-	// onFailure records a passive failure; the health checker consumes it later.
-	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, func(b *backend.Backend) {
-		b.AddPassiveFailure()
+	checker := health.NewChecker(pool, health.Options{
+		Path:               cfg.Health.Path,
+		Interval:           cfg.Health.Interval,
+		Timeout:            cfg.Health.Timeout,
+		HealthyThreshold:   cfg.Health.HealthyThreshold,
+		UnhealthyThreshold: cfg.Health.UnhealthyThreshold,
+		PassiveThreshold:   cfg.Health.PassiveThreshold,
 	})
 
-	return &Server{cfg: cfg, pool: pool, handler: handler}, nil
+	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure)
+
+	return &Server{cfg: cfg, pool: pool, checker: checker, handler: handler}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) Pool() *backend.Pool   { return s.pool }
 
-// Run starts the HTTP server and blocks until ctx is cancelled, then drains.
+// CheckOnce triggers one health probe cycle. Test/ops helper.
+func (s *Server) CheckOnce() { s.checker.CheckOnce() }
+
+// Run starts the HTTP server and the health checker and blocks until ctx is
+// cancelled, then drains in-flight requests.
 func (s *Server) Run(ctx context.Context) error {
+	go s.checker.Start(ctx)
+
 	httpSrv := &http.Server{Addr: s.cfg.Listen, Handler: s.handler}
 
 	errCh := make(chan error, 1)
