@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httputil"
+	"time"
 
 	"github.com/aybavs/go-load-balancer/internal/backend"
 	"github.com/aybavs/go-load-balancer/internal/balancer"
@@ -17,15 +18,22 @@ const stateKey ctxKey = 0
 
 type reqState struct{ failed bool }
 
-// failTrackingWriter records whether any response bytes/headers were written,
-// so we know whether a retry is still possible.
+// Observer records a completed request (status class = HTTP status / 100).
+type Observer interface {
+	Observe(b *backend.Backend, statusClass int, dur time.Duration)
+}
+
+// failTrackingWriter records whether any response bytes/headers were written
+// (so we know whether a retry is still possible) and the status code.
 type failTrackingWriter struct {
 	http.ResponseWriter
-	wrote bool
+	wrote  bool
+	status int
 }
 
 func (w *failTrackingWriter) WriteHeader(code int) {
 	w.wrote = true
+	w.status = code
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -39,15 +47,17 @@ type Handler struct {
 	algo       balancer.Algorithm
 	maxRetries int
 	onFailure  func(*backend.Backend)
+	observer   Observer
 	proxies    map[*backend.Backend]*httputil.ReverseProxy
 }
 
-func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onFailure func(*backend.Backend)) *Handler {
+func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onFailure func(*backend.Backend), observer Observer) *Handler {
 	h := &Handler{
 		pool:       pool,
 		algo:       algo,
 		maxRetries: maxRetries,
 		onFailure:  onFailure,
+		observer:   observer,
 		proxies:    make(map[*backend.Backend]*httputil.ReverseProxy),
 	}
 	for _, b := range pool.All() {
@@ -83,7 +93,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tried := make(map[*backend.Backend]bool, len(healthy))
-	ftw := &failTrackingWriter{ResponseWriter: w}
+	ftw := &failTrackingWriter{ResponseWriter: w, status: http.StatusOK}
 
 	for attempt := 0; attempt <= h.maxRetries; attempt++ {
 		b := h.pickUntried(healthy, r, tried)
@@ -99,11 +109,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		st := &reqState{}
 		ctx := context.WithValue(r.Context(), stateKey, st)
+		start := time.Now()
 		b.IncInFlight()
 		rp.ServeHTTP(ftw, r.WithContext(ctx))
 		b.DecInFlight()
 
 		if !st.failed {
+			if h.observer != nil {
+				h.observer.Observe(b, ftw.status/100, time.Since(start))
+			}
 			return
 		}
 		if h.onFailure != nil {

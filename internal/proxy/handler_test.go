@@ -19,7 +19,7 @@ func TestServeHTTPProxiesToBackend(t *testing.T) {
 
 	b, _ := backend.New(upstream.URL, 1)
 	pool := backend.NewPool([]*backend.Backend{b})
-	h := NewHandler(pool, &balancer.RoundRobin{}, 0, nil)
+	h := NewHandler(pool, &balancer.RoundRobin{}, 0, nil, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -40,7 +40,7 @@ func TestServeHTTPNoHealthyBackends(t *testing.T) {
 	b, _ := backend.New("http://127.0.0.1:1", 1)
 	b.SetHealthy(false)
 	pool := backend.NewPool([]*backend.Backend{b})
-	h := NewHandler(pool, &balancer.RoundRobin{}, 0, nil)
+	h := NewHandler(pool, &balancer.RoundRobin{}, 0, nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -62,7 +62,7 @@ func TestServeHTTPRetriesOnDeadBackend(t *testing.T) {
 	var failed []*backend.Backend
 	h := NewHandler(pool, &balancer.RoundRobin{}, 1, func(b *backend.Backend) {
 		failed = append(failed, b)
-	})
+	}, nil)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))

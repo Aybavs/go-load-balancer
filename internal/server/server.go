@@ -9,6 +9,7 @@ import (
 	"github.com/aybavs/go-load-balancer/internal/balancer"
 	"github.com/aybavs/go-load-balancer/internal/config"
 	"github.com/aybavs/go-load-balancer/internal/health"
+	"github.com/aybavs/go-load-balancer/internal/metrics"
 	"github.com/aybavs/go-load-balancer/internal/proxy"
 )
 
@@ -43,9 +44,14 @@ func New(cfg *config.Config) (*Server, error) {
 		PassiveThreshold:   cfg.Health.PassiveThreshold,
 	})
 
-	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure)
+	reg := metrics.NewRegistry(pool)
+	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure, reg)
 
-	return &Server{cfg: cfg, pool: pool, checker: checker, handler: handler}, nil
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", reg.Handler())
+	mux.Handle("/", handler)
+
+	return &Server{cfg: cfg, pool: pool, checker: checker, handler: mux}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
