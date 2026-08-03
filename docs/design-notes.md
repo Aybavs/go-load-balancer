@@ -76,6 +76,26 @@ requests, retries on another backend. Health state is eventually consistent, and
 the retry path is what makes "eventually" good enough. Reaching for stronger
 consistency here would be solving a problem the design already absorbs.
 
+## Reloading config is the same idea, one level up
+
+The atomic-snapshot pattern pays off again when the config changes at runtime.
+The naive way to hot-reload is to lock the handler's backend map and mutate it,
+which drags a lock back onto the hot path — exactly what the snapshot avoids. So
+instead of mutating the running handler, I build a whole new one from the new
+config and swap it behind a stable outer handler:
+
+```go
+s.outer = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    s.current.Load().handler.ServeHTTP(w, r)
+})
+```
+
+`Reload` builds a fresh generation (pool, health checker, proxies) and atomically
+swaps the pointer. A request already in `ServeHTTP` holds the old generation and
+finishes on it, so a backend dropped from the new config drains instead of being
+cut off — graceful draining falls out of the design for free rather than needing
+its own machinery. It's copy-on-write again, just with a bigger unit of copy.
+
 ## Choosing a backend: why not just "least loaded"
 
 Round-robin ignores load. The next obvious step, least-connections, picks the
