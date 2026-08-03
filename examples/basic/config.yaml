@@ -1,0 +1,15 @@
+listen: ":8080"
+algorithm: round_robin
+shutdown_timeout: 5s
+backends:
+  - url: http://localhost:9001
+  - url: http://localhost:9002
+health:
+  path: /healthz
+  interval: 2s
+  timeout: 1s
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+  passive_threshold: 5
+proxy:
+  max_retries: 1
