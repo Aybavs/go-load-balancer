@@ -139,9 +139,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.DecInFlight()
 
 		if !st.failed {
+			dur := time.Since(start)
 			status = ftw.status
+			b.RecordLatency(dur) // feeds latency-aware strategies (p2c_ewma)
 			if h.observer != nil {
-				h.observer.Observe(b, ftw.status/100, time.Since(start))
+				h.observer.Observe(b, ftw.status/100, dur)
 			}
 			return
 		}

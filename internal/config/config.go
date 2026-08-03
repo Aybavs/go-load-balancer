@@ -40,6 +40,7 @@ var validAlgorithms = map[string]bool{
 	"round_robin":       true,
 	"least_connections": true,
 	"consistent_hash":   true,
+	"p2c_ewma":          true,
 }
 
 // Load reads, parses, defaults, and validates a config file.
