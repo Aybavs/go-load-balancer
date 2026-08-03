@@ -9,6 +9,8 @@ func NewFromName(name string) (Algorithm, error) {
 		return &RoundRobin{}, nil
 	case "least_connections":
 		return LeastConnections{}, nil
+	case "consistent_hash":
+		return NewConsistentHash(), nil
 	default:
 		return nil, fmt.Errorf("balancer: unknown algorithm %q", name)
 	}
