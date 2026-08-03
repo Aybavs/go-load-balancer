@@ -3,7 +3,9 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/aybavs/go-load-balancer/internal/backend"
 	"github.com/aybavs/go-load-balancer/internal/balancer"
@@ -45,7 +47,8 @@ func New(cfg *config.Config) (*Server, error) {
 	})
 
 	reg := metrics.NewRegistry(pool)
-	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure, reg)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	handler := proxy.NewHandler(pool, algo, cfg.Proxy.MaxRetries, checker.ReportPassiveFailure, reg, logger)
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", reg.Handler())
