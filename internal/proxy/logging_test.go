@@ -24,7 +24,7 @@ func TestHandlerLogsRequest(t *testing.T) {
 
 	b, _ := backend.New(up.URL, 1)
 	pool := backend.NewPool([]*backend.Backend{b})
-	h := NewHandler(pool, &balancer.RoundRobin{}, 0, nil, nil, logger)
+	h := NewHandler(pool, &balancer.RoundRobin{}, 0, nil, nil, logger, nil)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orders", nil))

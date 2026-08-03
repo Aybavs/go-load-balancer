@@ -50,10 +50,13 @@ type Handler struct {
 	onFailure  func(*backend.Backend)
 	observer   Observer
 	logger     *slog.Logger
+	transport  http.RoundTripper
 	proxies    map[*backend.Backend]*httputil.ReverseProxy
 }
 
-func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onFailure func(*backend.Backend), observer Observer, logger *slog.Logger) *Handler {
+// NewHandler builds the routing handler. transport is shared by every
+// per-backend reverse proxy (nil falls back to http.DefaultTransport).
+func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onFailure func(*backend.Backend), observer Observer, logger *slog.Logger, transport http.RoundTripper) *Handler {
 	h := &Handler{
 		pool:       pool,
 		algo:       algo,
@@ -61,6 +64,7 @@ func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onF
 		onFailure:  onFailure,
 		observer:   observer,
 		logger:     logger,
+		transport:  transport,
 		proxies:    make(map[*backend.Backend]*httputil.ReverseProxy),
 	}
 	for _, b := range pool.All() {
@@ -71,6 +75,9 @@ func NewHandler(pool *backend.Pool, algo balancer.Algorithm, maxRetries int, onF
 
 func (h *Handler) newReverseProxy(b *backend.Backend) *httputil.ReverseProxy {
 	rp := httputil.NewSingleHostReverseProxy(b.URL)
+	if h.transport != nil {
+		rp.Transport = h.transport
+	}
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		if st, ok := r.Context().Value(stateKey).(*reqState); ok {
 			st.failed = true
