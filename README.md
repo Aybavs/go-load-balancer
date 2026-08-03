@@ -29,6 +29,9 @@ are intentionally out of scope (see [Roadmap](#roadmap)).
   line per request.
 - **Graceful shutdown** — drains in-flight requests within a configurable
   timeout.
+- **Hot reload** — `SIGHUP` rebuilds the serving stack from the config file
+  (backends, algorithm, health settings) without a restart and without dropping
+  in-flight requests.
 
 ## Quick start
 
@@ -92,6 +95,21 @@ transport:
   reacts to latency (not just connection count) and avoids the herd behaviour of
   always choosing the global minimum. Latency is tracked per backend as an
   exponentially-weighted moving average updated on every response.
+
+## Hot reload
+
+Edit the config file and send `SIGHUP`:
+
+```bash
+kill -HUP $(pgrep -f 'lb -config')
+```
+
+The balancer rebuilds every serving component from the new config — backends
+(added or removed), algorithm, and health settings — and swaps it in atomically.
+In-flight requests finish against the previous configuration, so a backend
+removed from the file drains instead of being cut off. The `listen` address is
+the one thing that cannot change (the socket is already bound). If the new file
+fails to load or validate, it is rejected and the running config is kept.
 
 ## Architecture
 
@@ -173,7 +191,7 @@ relative overhead is smaller still.
 - TLS termination, HTTP/2, and gRPC proxying
 - Weighted and weighted-least-connections strategies
 - Time-decayed peak-EWMA scoring for P2C
-- Rate limiting and config hot-reload
+- Rate limiting
 - Prometheus metrics format and richer latency histograms
 
 ## Project layout
