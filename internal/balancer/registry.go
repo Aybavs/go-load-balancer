@@ -11,6 +11,8 @@ func NewFromName(name string) (Algorithm, error) {
 		return LeastConnections{}, nil
 	case "consistent_hash":
 		return NewConsistentHash(), nil
+	case "p2c_ewma":
+		return P2CEWMA{}, nil
 	default:
 		return nil, fmt.Errorf("balancer: unknown algorithm %q", name)
 	}
