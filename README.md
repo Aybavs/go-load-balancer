@@ -156,6 +156,7 @@ shown; numbers vary by machine.
 | Round-robin        |  3.4  |     0     |
 | Least-connections  |  5.2  |     0     |
 | Consistent-hashing | 14.5  |     0     |
+| P2C-EWMA           | 26.3  |     0     |
 
 All selection paths are allocation-free.
 

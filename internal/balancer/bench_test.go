@@ -45,3 +45,14 @@ func BenchmarkConsistentHashPick(b *testing.B) {
 		_ = ch.Pick(healthy, nil)
 	}
 }
+func BenchmarkP2CEWMAPick(b *testing.B) {
+	healthy := makeBackends(8)
+	p2c := P2CEWMA{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = p2c.Pick(healthy, nil)
+	}
+}
