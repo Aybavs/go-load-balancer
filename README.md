@@ -9,27 +9,27 @@ the systems concerns of the problem — concurrency, health management, and
 observability — in a form you can read, run, and benchmark.
 
 **What it is not:** a service mesh, an API gateway, or an nginx/Envoy
-replacement. TLS termination, HTTP/2, gRPC, rate limiting, and config hot-reload
-are intentionally out of scope (see [Roadmap](#roadmap)).
+replacement. TLS termination, HTTP/2, gRPC, and rate limiting are intentionally
+out of scope (see [Roadmap](#roadmap)).
 
 ## Features
 
-- **Lock-free hot path** — the healthy-backend set is published via an
+* **Lock-free hot path** — the healthy-backend set is published via an
   `atomic.Pointer` snapshot; each request reads it with a single atomic load, no
   mutex. Per-backend counters (in-flight, health, failures) are `sync/atomic`.
-- **Pluggable algorithms** — round-robin, least-connections, consistent-hashing
-  (virtual-node ring, client-IP affinity), and **P2C-EWMA** (power-of-two-choices
+* **Pluggable algorithms** — round-robin, least-connections, consistent-hashing
+  (virtual-node ring, client-IP affinity), and **P2C-EWMA** (power-of-two choices
   scored by a latency EWMA — the technique used by Finagle and Envoy).
-- **Active + passive health checking** — periodic probes plus transport-failure
+* **Active + passive health checking** — periodic probes plus transport-failure
   feedback from real traffic; automatic eject and recover with hysteresis
   thresholds.
-- **Idempotent retries** — a failed transport attempt retries on another backend
+* **Idempotent retries** — a failed transport attempt retries on another backend
   only when no bytes have reached the client and the method is idempotent.
-- **Observability** — a JSON `/metrics` endpoint and one structured `slog` log
+* **Observability** — a JSON `/metrics` endpoint and one structured `slog` log
   line per request.
-- **Graceful shutdown** — drains in-flight requests within a configurable
+* **Graceful shutdown** — drains in-flight requests within a configurable
   timeout.
-- **Hot reload** — `SIGHUP` rebuilds the serving stack from the config file
+* **Hot reload** — `SIGHUP` rebuilds the serving stack from the config file
   (backends, algorithm, health settings) without a restart and without dropping
   in-flight requests.
 
@@ -60,6 +60,29 @@ curl localhost:8080    # handled by B
 curl localhost:8080/metrics
 ```
 
+### Makefile workflow
+
+The Makefile can manage the complete local demo:
+
+```bash
+make demo       # build and start both backends and the load balancer
+make status     # show managed processes
+make reload     # reload the config without restarting
+make logs       # follow process logs
+make stop       # stop all managed processes
+```
+
+Development checks:
+
+```bash
+make check      # formatting, vet, Go tests, and shell tests
+make test-race  # run tests with the race detector
+make bench      # run selection benchmarks
+```
+
+Run `make help` to list all available commands. Process state and logs are
+stored under the git-ignored `.run/` directory.
+
 ## Configuration
 
 ```yaml
@@ -87,18 +110,24 @@ transport:
 
 ### Balancing algorithms
 
-- `round_robin` — even rotation via one atomic counter.
-- `least_connections` — the backend with the fewest in-flight requests.
-- `consistent_hash` — client-IP affinity on a virtual-node hash ring.
-- `p2c_ewma` — **power of two choices**: sample two random backends and pick the
+* `round_robin` — even rotation via one atomic counter.
+* `least_connections` — the backend with the fewest in-flight requests.
+* `consistent_hash` — client-IP affinity on a virtual-node hash ring.
+* `p2c_ewma` — **power of two choices**: sample two random backends and pick the
   lower-cost one, where `cost = (latency_EWMA + 1) * (in_flight + 1)`. This
   reacts to latency (not just connection count) and avoids the herd behaviour of
   always choosing the global minimum. Latency is tracked per backend as an
-  exponentially-weighted moving average updated on every response.
+  exponentially weighted moving average updated on every response.
 
 ## Hot reload
 
-Edit the config file and send `SIGHUP`:
+Edit the config file and run:
+
+```bash
+make reload
+```
+
+When running the load balancer manually, send `SIGHUP` directly:
 
 ```bash
 kill -HUP $(pgrep -f 'lb -config')
@@ -108,32 +137,32 @@ The balancer rebuilds every serving component from the new config — backends
 (added or removed), algorithm, and health settings — and swaps it in atomically.
 In-flight requests finish against the previous configuration, so a backend
 removed from the file drains instead of being cut off. The `listen` address is
-the one thing that cannot change (the socket is already bound). If the new file
-fails to load or validate, it is rejected and the running config is kept.
+the one thing that cannot change because the socket is already bound. If the new
+file fails to load or validate, it is rejected and the running config is kept.
 
 ## Architecture
 
-```
-                 ┌──────────────────────────────────────────────┐
-                 │                 Load Balancer                 │
-   client ──────▶│  http.Server ──▶ Algorithm.Pick ──▶ Proxy ────┼──▶ backend[i]
-                 │        │              ▲                        │
-                 │        ▼              │ atomic snapshot        │
-                 │    /metrics       BackendPool ◀── HealthChecker (goroutines)
-                 └──────────────────────────────────────────────┘
+```text
+                 ┌─────────────────────────────────────────────────┐
+                 │                 Load Balancer                   │
+   client ──────▶│  http.Server ──▶ Algorithm.Pick ──▶  Proxy  ────┼──▶ backend[i]
+                 │        │              ▲                         │
+                 │        ▼              │ atomic snapshot         │
+                 │    /metrics       BackendPool ◀── HealthChecker │
+                 └─────────────────────────────────────────────────┘
 ```
 
 ### Concurrency model (the key design decision)
 
-The set of *healthy* backends is read on **every request** and mutated **rarely**
+The set of healthy backends is read on **every request** and mutated **rarely**
 (a health flip or config reload). This is a read-heavy / write-rare pattern, so:
 
-- the pool holds an **immutable snapshot** (`[]*Backend`) behind an
+* the pool holds an **immutable snapshot** (`[]*Backend`) behind an
   `atomic.Pointer`; readers do one atomic load — **no lock, no contention**,
   scaling with cores;
-- writers build a **new** slice and atomically swap the pointer
+* writers build a **new** slice and atomically swap the pointer
   (copy-on-write); writes are rare, so the copy cost is irrelevant;
-- per-backend mutable state (in-flight count, health, passive failures) uses
+* per-backend mutable state (in-flight count, health, passive failures) uses
   `sync/atomic`, so incrementing an in-flight counter never takes a lock.
 
 The alternative — a single `RWMutex` around the backend list — would put lock
@@ -142,7 +171,8 @@ lock-free; a `-race` stress test (`internal/server/concurrency_test.go`) hammers
 it under concurrent health flips.
 
 The reasoning behind this model, the consistency window it accepts, and the
-P2C-EWMA scoring choice are written up in [docs/design-notes.md](docs/design-notes.md).
+P2C-EWMA scoring choice are written up in
+[docs/design-notes.md](docs/design-notes.md).
 
 ## Benchmarks
 
@@ -152,22 +182,22 @@ shown; numbers vary by machine.
 **Selection microbenchmarks** — `go test -bench=. -benchmem ./internal/balancer/`
 
 | Algorithm          | ns/op | allocs/op |
-|--------------------|------:|----------:|
-| Round-robin        |  3.4  |     0     |
-| Least-connections  |  5.2  |     0     |
-| Consistent-hashing | 14.5  |     0     |
-| P2C-EWMA           | 26.3  |     0     |
+| ------------------ | ----: | --------: |
+| Round-robin        |   3.4 |         0 |
+| Least-connections  |   5.2 |         0 |
+| Consistent-hashing |  14.5 |         0 |
+| P2C-EWMA           |  26.3 |         0 |
 
 All selection paths are allocation-free.
 
 **End-to-end throughput** — `ab -n 20000 -c 50` against a no-op backend on
 localhost, 0 failed requests in every run:
 
-| Target                                   | req/s   | p99 (ms) |
-|------------------------------------------|--------:|---------:|
-| Direct backend (baseline)                | 25,900  |    3     |
-| Through LB — default transport           |  9,100  |   16     |
-| Through LB — tuned transport             | 16,900  |    6     |
+| Target                         |  req/s | p99 (ms) |
+| ------------------------------ | -----: | -------: |
+| Direct backend (baseline)      | 25,900 |        3 |
+| Through LB — default transport |  9,100 |       16 |
+| Through LB — tuned transport   | 16,900 |        6 |
 
 The default `http.Transport` caps idle connections per host at **2**, which
 forces connection churn under concurrency. Sharing one tuned transport
@@ -179,34 +209,36 @@ relative overhead is smaller still.
 
 ## Known simplifications (V1)
 
-- The consistent-hash ring rebuilds when the healthy set **size** changes; a
+* The consistent-hash ring rebuilds when the healthy set **size** changes; a
   production ring would key rebuilds on set identity.
-- A backend returning HTTP 5xx is treated as a response (passed through), not a
+* A backend returning HTTP 5xx is treated as a response (passed through), not a
   passive failure.
-- The latency EWMA is a simple fixed-alpha average; a time-decayed peak-EWMA
+* The latency EWMA is a simple fixed-alpha average; a time-decayed peak-EWMA
   would react faster to sudden latency spikes.
-- Weights are parsed but not yet used by a weighted strategy.
+* Weights are parsed but not yet used by a weighted strategy.
 
 ## Roadmap
 
-- TLS termination, HTTP/2, and gRPC proxying
-- Weighted and weighted-least-connections strategies
-- Time-decayed peak-EWMA scoring for P2C
-- Rate limiting
-- Prometheus metrics format and richer latency histograms
+* TLS termination, HTTP/2, and gRPC proxying
+* Weighted and weighted-least-connections strategies
+* Time-decayed peak-EWMA scoring for P2C
+* Rate limiting
+* Prometheus metrics format and richer latency histograms
 
 ## Project layout
 
-```
-cmd/lb/              entrypoint
-internal/backend/    Backend + lock-free Pool
-internal/balancer/   Algorithm interface + strategies
-internal/proxy/      selection, reverse proxy, retry, logging
-internal/health/     state machine + active/passive checker
-internal/metrics/    counters + /metrics
-internal/config/     YAML config + validation
-internal/server/     wiring + graceful shutdown
-examples/basic/      runnable demo
+```text
+Makefile              development commands
+cmd/lb/               entrypoint
+internal/backend/     Backend + lock-free Pool
+internal/balancer/    Algorithm interface + strategies
+internal/proxy/       selection, reverse proxy, retry, logging
+internal/health/      state machine + active/passive checker
+internal/metrics/     counters + /metrics
+internal/config/      YAML config + validation
+internal/server/      wiring + graceful shutdown
+examples/basic/       runnable demo
+scripts/              local demo process management
 ```
 
 ## License

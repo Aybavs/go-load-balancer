@@ -12,3 +12,6 @@ docs/superpowers/
 
 # OS / editor
 .DS_Store
+
+# Local development process state
+/.run/
